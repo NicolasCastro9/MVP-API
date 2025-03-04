@@ -1,0 +1,110 @@
+body {
+    font-family: Arial, sans-serif;
+    text-align: center;
+    margin: 20px;
+    background-color: #f4f4f9;
+    color: #333;
+}
+
+.container {
+    max-width: 600px;
+    margin: auto;
+    padding: 20px;
+    background: white;
+    border-radius: 10px;
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+}
+
+/* Mejor distribución de los botones */
+.botones {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-bottom: 20px;
+}
+
+.botones input {
+    flex: 1;
+    padding: 10px;
+    border: 1px solid #ccc;
+    border-radius: 5px;
+}
+
+.botones button {
+    flex: 1;
+    padding: 10px 15px;
+    cursor: pointer;
+    background-color: #007bff;
+    color: white;
+    border: none;
+    border-radius: 5px;
+    transition: background 0.3s;
+}
+
+.botones button:hover {
+    background-color: #0056b3;
+}
+
+/* Resultados con mejor visualización */
+#resultados {
+    border: 1px solid #ddd;
+    padding: 15px;
+    min-height: 100px;
+    text-align: left;
+    margin-top: 10px;
+    background: #fff;
+    border-radius: 5px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+h3 {
+    color: #333;
+}
+
+/* Estilos para los resultados */
+.resultado-item {
+    background: #f8f9fa;
+    padding: 10px;
+    margin: 5px 0;
+    border-radius: 5px;
+    border-left: 5px solid #007bff;
+    font-size: 14px;
+}
+
+/* Mejor visualización de vulnerabilidades */
+.vuln-card {
+    background: #f8f8f8;
+    border-left: 5px solid #ff9800;
+    padding: 15px;
+    margin: 10px 0;
+    border-radius: 5px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+h4 {
+    margin-bottom: 5px;
+}
+
+/* Colores de severidad */
+.medium {
+    color: #ff9800; /* Naranja para Medium */
+}
+
+.high {
+    color: #d32f2f; /* Rojo para High */
+}
+
+.low {
+    color: #4caf50; /* Verde para Low */
+}
+
+.informational {
+    color: #1976d2; /* Azul para Informational */
+}
+
+/* Mejora de mensajes de error */
+.error {
+    color: red;
+    font-weight: bold;
+}
