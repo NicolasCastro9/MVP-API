@@ -11,7 +11,7 @@ from pydantic import BaseModel
 
 app = FastAPI()
 
-# Habilitar CORS para permitir solicitudes desde cualquier origen
+# Habilitar CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -19,6 +19,9 @@ app.add_middleware(
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["Content-Type", "Authorization"],
 )
+
+# Base de datos en memoria (Diccionario)
+cache_busquedas = {}
 
 # Lista de Google Dorks
 dorks = [
@@ -34,7 +37,7 @@ dorks = [
 def configurar_navegador():
     """Configura y retorna una instancia del navegador Selenium."""
     options = Options()
-    #options.add_argument("--headless")  # Ejecutar en modo sin interfaz gráfica
+    # options.add_argument("--headless")  # Ejecutar en modo sin interfaz gráfica
     options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
@@ -46,9 +49,6 @@ def configurar_navegador():
     return driver
 
 
-
-
-
 class DominioRequest(BaseModel):
     dominio: str
 
@@ -56,16 +56,18 @@ class DominioRequest(BaseModel):
 @app.post("/buscar")
 def buscar_apis(request: DominioRequest):
     """
-    Endpoint para buscar APIs en un dominio con Google Dorks mediante POST.
+    Endpoint para buscar APIs en un dominio con Google Dorks.
 
-    Ejemplo de uso:
-    POST http://127.0.0.1:8003/buscar
-    Body JSON: {"dominio": "ejemplo.com"}
+    Si el dominio ya fue buscado previamente, se devuelve la búsqueda almacenada en caché.
     """
     dominio = request.dominio.strip()
 
     if not dominio:
         return {"error": "Debe proporcionar un dominio válido"}
+
+    # Si el dominio ya fue buscado antes, devolver los datos almacenados
+    if dominio in cache_busquedas:
+        return {"cached": True, "apis_found": cache_busquedas[dominio]}
 
     driver = configurar_navegador()
     urls_encontradas = set()
@@ -96,5 +98,10 @@ def buscar_apis(request: DominioRequest):
     finally:
         driver.quit()  # Cerrar el navegador
 
-    return {"apis_found": [{"url": url} for url in urls_encontradas]}
+    # Convertir a lista de diccionarios
+    resultado_final = [{"url": url} for url in urls_encontradas]
 
+    # Guardar en caché
+    cache_busquedas[dominio] = resultado_final
+
+    return {"cached": False, "apis_found": resultado_final}
