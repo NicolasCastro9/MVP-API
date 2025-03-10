@@ -75,7 +75,7 @@ function mostrarResultados(datos, titulo, tipo) {
     if (tipo === "api" && datos.apis_found) {
         html += "<ul>";
         datos.apis_found.forEach(api => {
-            html += `<li><strong>URL:</strong> ${api.url || "No disponible"}</li>`;
+            html += `<li><strong>URL:</strong> <a href="${api.url}" target="_blank" rel="noopener noreferrer">${api.url || "No disponible"}</a></li>`;
         });
         html += "</ul>";
     } else if (tipo === "vulnerabilidad" && datos.findings) {
@@ -117,6 +117,16 @@ function mostrarResultados(datos, titulo, tipo) {
 
     document.getElementById("resultados").innerHTML = html;
 }
+
+async function buscar_Apis_Dorking() {
+    const dominio = document.getElementById("dominio").value.trim();
+    if (!validarDominio(dominio)) return;
+
+    const url = "http://127.0.0.1:8003/buscar"; // API de Dorking
+    llamarAPI(url, { dominio: dominio }, "🔍 APIs encontradas:", "api");
+}
+
+
 
 
 function mostrarError(mensaje) {
