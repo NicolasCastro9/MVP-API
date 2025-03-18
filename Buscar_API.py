@@ -1,13 +1,16 @@
 import time
 import random
+import concurrent.futures
 from fastapi import FastAPI
 from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.firefox.service import Service as FirefoxService
+from selenium.webdriver.firefox.options import Options
 from selenium.webdriver.common.by import By
-from webdriver_manager.chrome import ChromeDriverManager
+from webdriver_manager.firefox import GeckoDriverManager
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+import stem
+import stem.control
 
 app = FastAPI()
 
@@ -20,86 +23,105 @@ app.add_middleware(
     allow_headers=["Content-Type", "Authorization"],
 )
 
-# Base de datos en memoria (Diccionario)
+# Cache para evitar búsquedas repetidas
 cache_busquedas = {}
 
-# Lista de Google Dorks
+# Dorks para buscar APIs
 dorks = [
-    "inurl:api OR inurl:swagger OR inurl:graphql OR inurl:openapi",
-    "inurl:developer/api OR inurl:docs/api OR inurl:sdk OR inurl:api/documentation",
-    "inurl:api-reference OR inurl:endpoints OR inurl:api-overview",
-    "filetype:json api OR filetype:yaml api OR filetype:xml api",
-    "filetype:pdf API Reference OR filetype:md API OR intitle:API Documentation",
-    "inurl:swagger-ui OR inurl:openapi.json OR inurl:swagger.json"
+    "inurl:/api site:{dominio}",
+    "inurl:/docs/api site:{dominio}",
+    "inurl:/api/v1 OR inurl:/api/v2 site:{dominio}",
+    "inurl:/api-docs OR inurl:/api-documentation site:{dominio}",
+    "inurl:/api/ OR inurl:/apis/ OR inurl:/v1/ OR inurl:/v2/ site:{dominio}"
 ]
 
+# Palabras clave para filtrar resultados
+palabras_clave = [
+    "api", "swagger", "graphql", "openapi",
+    "developer", "docs", "sdk", "documentation",
+    "api-reference", "endpoints", "api-overview",
+    "swagger-ui", "openapi.json", "swagger.json", "api-docs"
+]
+
+def nueva_identidad():
+    """ Solicita una nueva identidad en Tor para evitar bloqueos. """
+    try:
+        with stem.control.Controller.from_port(port=9051) as controller:
+            controller.authenticate()
+            controller.signal(stem.Signal.NEWNYM)
+            print("🔄 Nueva identidad de Tor solicitada.")
+    except Exception as e:
+        print(f"⚠️ No se pudo cambiar de identidad: {e}")
 
 def configurar_navegador():
-    """Configura y retorna una instancia del navegador Selenium."""
+    """ Configura y retorna una instancia de Selenium con Tor. """
     options = Options()
-    # options.add_argument("--headless")  # Ejecutar en modo sin interfaz gráfica
-    options.add_argument("--disable-blink-features=AutomationControlled")
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_experimental_option("excludeSwitches", ["enable-automation"])
-    options.add_experimental_option("useAutomationExtension", False)
+    options.add_argument("--headless")
+    options.set_preference("network.proxy.type", 1)
+    options.set_preference("network.proxy.socks", "127.0.0.1")
+    options.set_preference("network.proxy.socks_port", 9050)
+    options.set_preference("network.proxy.socks_version", 5)
+    options.set_preference("network.proxy.socks_remote_dns", True)
 
-    driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
-    driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+    driver = webdriver.Firefox(service=FirefoxService(GeckoDriverManager().install()), options=options)
     return driver
 
+def buscar_dork(dork, dominio):
+    """ Realiza una búsqueda en DuckDuckGo con Selenium y retorna URLs encontradas. """
+    driver = configurar_navegador()
+    urls_encontradas = set()
+
+    try:
+        query = dork.replace("{dominio}", dominio)
+        url = f"https://duckduckgo.com/?q={query}&t=h_&ia=web"
+        driver.get(url)
+        time.sleep(random.randint(5, 8))
+
+        resultados = driver.find_elements(By.CSS_SELECTOR, "a[href^='http']")
+        for enlace in resultados:
+            url_extraida = enlace.get_attribute("href")
+            if url_extraida and dominio in url_extraida and "duckduckgo.com" not in url_extraida:
+                urls_encontradas.add(url_extraida)
+
+    except Exception as e:
+        print(f"Error en búsqueda {dork}: {e}")
+    finally:
+        driver.quit()
+
+    return urls_encontradas
+
+def filtrar_urls(urls):
+    """ Filtra URLs basadas en palabras clave relevantes. """
+    return [url for url in urls if any(kw in url.lower() for kw in palabras_clave)]
 
 class DominioRequest(BaseModel):
     dominio: str
 
-
 @app.post("/buscar")
 def buscar_apis(request: DominioRequest):
-    """
-    Endpoint para buscar APIs en un dominio con Google Dorks.
-
-    Si el dominio ya fue buscado previamente, se devuelve la búsqueda almacenada en caché.
-    """
+    """ Busca APIs en el dominio de manera paralela. """
     dominio = request.dominio.strip()
 
     if not dominio:
         return {"error": "Debe proporcionar un dominio válido"}
 
-    # Si el dominio ya fue buscado antes, devolver los datos almacenados
     if dominio in cache_busquedas:
         return {"cached": True, "apis_found": cache_busquedas[dominio]}
 
-    driver = configurar_navegador()
-    urls_encontradas = set()
+    urls_totales = set()
 
-    try:
-        for dork in dorks:
-            query = f"site:{dominio} {dork}"
-            url = f"https://www.google.com/search?q={query}"
+    # 🔄 Solicitar nueva identidad antes de hacer las búsquedas
+    nueva_identidad()
 
-            driver.get(url)
-            time.sleep(random.randint(5, 8))  # Espera aleatoria para evitar bloqueos
+    # 🔹 Ejecutar búsquedas en paralelo con menos hilos
+    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+        futuros = [executor.submit(buscar_dork, dork, dominio) for dork in dorks]
+        for futuro in concurrent.futures.as_completed(futuros):
+            urls_totales.update(futuro.result())
 
-            # Buscar enlaces en los resultados de Google
-            resultados = driver.find_elements(By.CSS_SELECTOR, "div.tF2Cxc a")
-            if not resultados:
-                resultados = driver.find_elements(By.CSS_SELECTOR, "a[href^='http']")
-
-            for resultado in resultados:
-                url_encontrada = resultado.get_attribute("href")
-                if url_encontrada and dominio in url_encontrada and "google.com" not in url_encontrada:
-                    urls_encontradas.add(url_encontrada)
-
-            time.sleep(random.randint(5, 8))  # Espera entre consultas
-
-    except Exception as e:
-        return {"error": f"Ocurrió un error: {str(e)}"}
-
-    finally:
-        driver.quit()  # Cerrar el navegador
-
-    # Convertir a lista de diccionarios
-    resultado_final = [{"url": url} for url in urls_encontradas]
+    # 🔹 Filtrar resultados
+    urls_filtradas = filtrar_urls(urls_totales)
+    resultado_final = [{"url": url} for url in urls_filtradas]
 
     # Guardar en caché
     cache_busquedas[dominio] = resultado_final
