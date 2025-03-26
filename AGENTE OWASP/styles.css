@@ -1,0 +1,131 @@
+body {
+    font-family: Arial, sans-serif;
+    background-color: #f4f4f4;
+    text-align: center;
+    margin: 0;
+    padding: 0;
+}
+
+.container {
+    width: 50%;
+    margin: auto;
+    padding: 20px;
+    background: white;
+    box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+    margin-top: 50px;
+    border-radius: 8px;
+}
+
+input {
+    width: 80%;
+    padding: 10px;
+    margin: 10px 0;
+    border: 1px solid #ccc;
+    border-radius: 5px;
+}
+
+button {
+    padding: 10px 20px;
+    background: #007bff;
+    color: white;
+    border: none;
+    cursor: pointer;
+    border-radius: 5px;
+}
+
+button:hover {
+    background: #0056b3;
+}
+
+.vulnerability {
+    border-left: 5px solid;
+    padding: 10px;
+    margin: 10px 0;
+    background: #fff;
+    box-shadow: 2px 2px 5px rgba(0, 0, 0, 0.1);
+}
+
+.severity-Medium {
+    border-color: orange;
+}
+
+.severity-Low {
+    border-color: yellow;
+}
+
+.severity-Informational {
+    border-color: gray;
+}
+
+#scanner {
+    text-align: center;
+    margin-bottom: 20px;
+}
+
+#results {
+    margin-top: 10px;
+    padding: 15px;
+    border-radius: 5px;
+    display: none; /* Ocultar hasta que haya resultados */
+}
+
+
+.loading {
+    font-size: 16px;
+    font-weight: bold;
+    color: #ff9800;
+    text-align: center;
+}
+
+.error {
+    font-size: 16px;
+    font-weight: bold;
+    color: #d32f2f;
+    text-align: center;
+}
+
+.recommendation-container {
+    background: #f8f9fa;
+    border-left: 4px solid #007bff;
+    padding: 15px;
+    margin-top: 10px;
+    border-radius: 5px;
+    text-align: left; 
+}
+
+.recommendation-container h4 {
+    color: #8400ff;
+    font-size: 25px;
+    margin-top: 50px;
+    margin-bottom: 10px;
+    font-weight: bold;
+}
+
+.recommendation-container ul {
+    padding-left: 20px;
+}
+
+.recommendation-container li {
+    list-style-type: square;
+    margin-bottom: 5px;
+}
+
+.impact-low {
+    color: rgb(12, 224, 12);
+    font-weight: bold;
+}
+
+.impact-medium {
+    color: orange;
+    font-weight: bold;
+}
+
+.impact-high {
+    color: red;
+    font-weight: bold;
+}
+
+.impact-info, .impact-informational {
+    color: rgb(21, 0, 255);
+    font-weight: bold;
+}
