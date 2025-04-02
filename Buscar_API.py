@@ -56,7 +56,7 @@ def nueva_identidad():
 def configurar_navegador():
     """ Configura y retorna una instancia de Selenium con Tor. """
     options = Options()
-    options.add_argument("--headless")
+    # options.add_argument("--headless")
     options.set_preference("network.proxy.type", 1)
     options.set_preference("network.proxy.socks", "127.0.0.1")
     options.set_preference("network.proxy.socks_port", 9050)

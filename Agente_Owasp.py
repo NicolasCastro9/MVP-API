@@ -1,42 +1,43 @@
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, HttpUrl
 from fastapi.middleware.cors import CORSMiddleware
-import time
-import json
 import asyncio
 from datetime import datetime
 from zapv2 import ZAPv2
-from pydantic import BaseModel, StringConstraints
-from typing import Annotated
+import os
+import requests
 
 app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Cambia esto a los dominios permitidos en producción
+    allow_origins=["*"],  # Cambia esto en producción
     allow_credentials=True,
-    allow_methods=["*"],  # Permitir todos los métodos (GET, POST, etc.)
-    allow_headers=["*"],  # Permitir todos los headers
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # Configuración de OWASP ZAP
-ZAP_PROXY = "http://127.0.0.1:8090"  # Asegúrate de que ZAP está corriendo en este puerto
-API_KEY = "l921deqfoelkivnq6ea03qkqog"  # Si usas una API Key en ZAP, agrégala aquí
+ZAP_PROXY = "http://127.0.0.1:8090"
+ZAP_API_KEY = os.getenv("ZAP_API_KEY")  # Variable de entorno para la API Key de ZAP
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")  # Variable de entorno para la API Key de OpenAI
 
-# Instancia de ZAP
-zap = ZAPv2(proxies={"http": ZAP_PROXY, "https": ZAP_PROXY}, apikey=API_KEY)
+zap = ZAPv2(proxies={"http": ZAP_PROXY, "https": ZAP_PROXY}, apikey=ZAP_API_KEY)
 
 class ScanRequest(BaseModel):
-    domain: Annotated[str, StringConstraints(pattern=r"^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")]
+    url: HttpUrl  # Validar que sea una URL válida
+
+class ChatGPTRequest(BaseModel):
+    findings: list  # Recibe los hallazgos de ZAP
 
 async def scan_api(target_url: str):
     """
-    Escanea un dominio con OWASP ZAP y devuelve los resultados en JSON.
+    Escanea una URL con OWASP ZAP y devuelve los resultados en JSON.
     """
     try:
         print(f"[+] Accediendo al objetivo: {target_url}")
         zap.urlopen(target_url)
-        await asyncio.sleep(2)  # Esperar a que se cargue en ZAP
+        await asyncio.sleep(2)
 
         print("[+] Iniciando escaneo activo...")
         scan_id = zap.ascan.scan(target_url)
@@ -50,10 +51,8 @@ async def scan_api(target_url: str):
 
         print("[+] Escaneo completado!")
 
-        # Obtener alertas encontradas
         alerts = zap.core.alerts(baseurl=target_url)
 
-        # Formatear los resultados
         scan_results = {
             "meta": {
                 "scan_date": datetime.utcnow().isoformat(),
@@ -80,8 +79,7 @@ async def scan_api(target_url: str):
 
 @app.post("/scan")
 async def scan(request: ScanRequest):
-    clean_domain = request.domain.strip().lower()
-    target_url = f"https://{clean_domain}"  # Agregar http:// automáticamente
+    target_url = str(request.url)
     print(f"🔍 Escaneando: {target_url}")
 
     try:
@@ -89,4 +87,43 @@ async def scan(request: ScanRequest):
         return results
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error en el escaneo: {str(e)}")
+
+@app.post("/recommendations")
+async def get_recommendations(request: ChatGPTRequest):
+    """
+    Envía los hallazgos de ZAP a OpenAI y devuelve recomendaciones.
+    """
+    if not OPENAI_API_KEY:
+        raise HTTPException(status_code=500, detail="API Key de OpenAI no configurada.")
+
+    payload = {
+        "model": "gpt-3.5-turbo",
+        "messages": [
+            {
+                "role": "system",
+                "content": "Eres un analista de ciberseguridad experto en OWASP TOP 10. Analiza las vulnerabilidades y proporciona impacto y soluciones."
+            },
+            {
+                "role": "user",
+                "content": f"Aquí están los hallazgos de seguridad:\n\n{request.findings}"
+            }
+        ],
+        "temperature": 0.7
+    }
+
+    headers = {
+        "Authorization": f"Bearer {OPENAI_API_KEY}",
+        "Content-Type": "application/json"
+    }
+
+    response = requests.post("https://api.openai.com/v1/chat/completions", json=payload, headers=headers)
+    
+    if response.status_code != 200:
+        raise HTTPException(status_code=response.status_code, detail="Error en la solicitud a OpenAI")
+
+    # Extraer el contenido correctamente
+    response_json = response.json()
+    recommendations = response_json.get("choices", [{}])[0].get("message", {}).get("content", "No se generaron recomendaciones.")
+
+    return {"recommendations": recommendations}
 
