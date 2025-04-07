@@ -6,6 +6,8 @@ from datetime import datetime
 from zapv2 import ZAPv2
 import os
 import requests
+import json
+import html
 
 app = FastAPI()
 
@@ -64,11 +66,12 @@ async def scan_api(target_url: str):
         for alert in alerts:
             finding = {
                 "host": target_url,
+                "url": alert.get("url", "No disponible"),
                 "severity": alert.get('risk', 'Desconocido'),
                 "type": alert.get('alert', 'Sin información'),
-                "description": alert.get('description', 'No disponible'),
-                "remediation": alert.get('solution', 'No disponible'),
-                "evidence": alert.get('evidence', 'No disponible')
+                "description": html.escape(alert.get('description', 'No disponible')),
+                "remediation": html.escape(alert.get('solution', 'No disponible')),
+                "evidence": html.escape(alert.get('evidence', 'No disponible'))
             }
             scan_results["findings"].append(finding)
 
@@ -95,6 +98,8 @@ async def get_recommendations(request: ChatGPTRequest):
     """
     if not OPENAI_API_KEY:
         raise HTTPException(status_code=500, detail="API Key de OpenAI no configurada.")
+    
+    formatted_findings = json.dumps(request.findings, indent=2, ensure_ascii=False)
 
     payload = {
         "model": "gpt-3.5-turbo",
@@ -104,8 +109,15 @@ async def get_recommendations(request: ChatGPTRequest):
                 "content": "Eres un analista de ciberseguridad experto en OWASP TOP 10. Analiza las vulnerabilidades y proporciona impacto y soluciones."
             },
             {
-                "role": "user",
-                "content": f"Aquí están los hallazgos de seguridad:\n\n{request.findings}"
+            "role": "user",
+            "content": (
+                "Te enviaré una lista de hallazgos de seguridad identificados en un escaneo web. "
+                "Para cada hallazgo, genera una recomendación personalizada en español que incluya: "
+                "**el nombre de la vulnerabilidad**, **la severidad**, **la descripcion de la vulnerabilidad**, **la URL afectada**, **la evidencia (si la evidencia es un script, eliminar el tag <script>)**, "
+                "y una **recomendación concreta para solucionarlo**. No repitas la descripción del hallazgo, solo genera la recomendación completa "
+                "como si fuera escrita por un experto. Usa Markdown si es necesario para resaltar elementos importantes.\n\n"
+                f"Hallazgos:\n{formatted_findings}"
+            )
             }
         ],
         "temperature": 0.7

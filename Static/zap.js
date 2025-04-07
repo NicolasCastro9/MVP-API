@@ -69,10 +69,7 @@ function displayRecommendations(recommendationText) {
         return;
     }
 
-    // Separar por párrafos dobles y filtrar introducción y resumen
     const paragraphs = recommendationText.split("\n\n").map(p => p.trim()).filter(p => p);
-
-    // Filtrar la introducción y el resumen
     const vulnerabilities = paragraphs.filter(p => 
         !(p.startsWith("Basándome en los hallazgos") || p.startsWith("En resumen"))
     );
@@ -80,11 +77,12 @@ function displayRecommendations(recommendationText) {
     function processNext(index) {
         if (index >= vulnerabilities.length) return;
 
-        let vuln = vulnerabilities[index]
-            .replace(/\*\*Impacto:\*\* Bajo/g, "<span class='impact-low'><strong>Impacto:</strong> Bajo</span>")
-            .replace(/\*\*Impacto:\*\* Medio/g, "<span class='impact-medium'><strong>Impacto:</strong> Medio</span>")
-            .replace(/\*\*Impacto:\*\* Alto/g, "<span class='impact-high'><strong>Impacto:</strong> Alto</span>")
-            .replace(/### (.*?)\n/g, "<h4 class='vuln-title'>$1</h4>") // Resalta el nombre de la vulnerabilidad
+        const raw = vulnerabilities[index];
+
+        // 🔹 **Revisamos si es "Severidad" en español**
+
+        let vuln = raw
+            .replace(/### (.*?)\n/g, "<h4 class='vuln-title'>$1</h4>")
             .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
             .replace(/\n- /g, "<ul><li>")
             .replace(/\n/g, "</li><li>")
@@ -94,12 +92,15 @@ function displayRecommendations(recommendationText) {
         vulnElement.classList.add("vulnerability");
         container.appendChild(vulnElement);
 
-        // Aplicar efecto de escritura y pasar a la siguiente vulnerabilidad
         typeWriterEffect(vulnElement, vuln, () => processNext(index + 1));
     }
 
-    processNext(0); // Iniciar con la primera vulnerabilidad
+    processNext(0);
 }
+
+
+
+
 
 function typeWriterEffect(element, htmlContent, callback, speed = 5) {
     let i = 0;
@@ -110,12 +111,20 @@ function typeWriterEffect(element, htmlContent, callback, speed = 5) {
             tempDiv.innerHTML = htmlContent.substring(0, i + 1);
             element.innerHTML = tempDiv.innerHTML;
             i++;
+
+            // 🟡 Scroll automático hacia el final
+            window.scrollTo({
+                top: document.body.scrollHeight,
+                behavior: "smooth"
+            });
+
             setTimeout(type, speed);
         } else {
             element.innerHTML = htmlContent;
-            if (callback) callback(); // Llamar al callback cuando termine
+            if (callback) callback();
         }
     }
 
     type();
 }
+
