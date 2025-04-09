@@ -24,6 +24,8 @@ ZAP_PROXY = "http://127.0.0.1:8090"
 ZAP_API_KEY = os.getenv("ZAP_API_KEY")  # Variable de entorno para la API Key de ZAP
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")  # Variable de entorno para la API Key de OpenAI
 
+progress_data = {}
+
 zap = ZAPv2(proxies={"http": ZAP_PROXY, "https": ZAP_PROXY}, apikey=ZAP_API_KEY)
 
 class ScanRequest(BaseModel):
@@ -74,7 +76,8 @@ async def scan_api(target_url: str):
                 "evidence": html.escape(alert.get('evidence', 'No disponible'))
             }
             scan_results["findings"].append(finding)
-
+        is_wordpress = detect_wordpress(target_url)
+        scan_results["meta"]["is_wordpress"] = is_wordpress
         return scan_results
 
     except Exception as e:
@@ -139,3 +142,33 @@ async def get_recommendations(request: ChatGPTRequest):
 
     return {"recommendations": recommendations}
 
+
+
+
+def detect_wordpress(target_url: str) -> bool:
+    try:
+        response = requests.get(target_url, timeout=10)
+        html_content = response.text.lower()
+
+        indicators = [
+            "wp-content",         # Archivos típicos de WordPress
+            "wp-includes",        # Archivos de núcleo de WP
+            "wp-json",            # API REST
+            "xmlrpc.php",         # Entrada clásica de WordPress
+            "wordpress",          # Mención directa
+            "wp-login.php",       # Página de login
+        ]
+
+        for keyword in indicators:
+            if keyword in html_content:
+                return True
+
+        # Extra: intentar acceder a /wp-login.php
+        wp_login = requests.get(f"{target_url.rstrip('/')}/wp-login.php", timeout=5)
+        if wp_login.status_code == 200 and "wordpress" in wp_login.text.lower():
+            return True
+
+        return False
+    except Exception as e:
+        print(f"[!] Error detectando WordPress: {e}")
+        return False

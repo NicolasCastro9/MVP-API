@@ -12,7 +12,7 @@ async function buscarAPIs() {
 
 
 async function escanearVulnerabilidades() {
-    window.location.href = "zap.html"
+    window.location.href = "ZAP/zap.html"
 }
 
 
