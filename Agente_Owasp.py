@@ -16,6 +16,8 @@ import ssl
 from urllib.parse import urlparse
 import html
 
+
+scan_lock = asyncio.Lock()
 app = FastAPI()
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -44,57 +46,112 @@ class ChatGPTRequest(BaseModel):
     findings: list  # Recibe los hallazgos de ZAP
 
 
-
-
-
 async def scan_api(target_url: str):
     """
-    Escanea una URL con OWASP ZAP y devuelve los resultados en JSON.
+    Mapea una URL con el Spider de OWASP ZAP por un máximo de 60 segundos,
+    recopila TODAS las alertas pasivas y devuelve una lista de hallazgos únicos,
+    con especial atención a los detalles de las librerías vulnerables.
     """
+    SPIDER_MAX_DURATION = 60
+
     try:
-        print(f"[+] Accediendo al objetivo: {target_url}")
+        print("[+] Limpiando alertas de sesiones previas...")
+        zap.core.delete_all_alerts(apikey=ZAP_API_KEY) # Es buena práctica pasar la key siempre
+
+        print(f"[+] Accediendo al objetivo para el spider: {target_url}")
         zap.urlopen(target_url)
         await asyncio.sleep(2)
 
-        print("[+] Iniciando escaneo activo...")
-        scan_id = zap.ascan.scan(target_url)
-
+        print(f"[+] Iniciando Spider (con un tiempo límite de {SPIDER_MAX_DURATION} segundos)...")
+        scan_id = zap.spider.scan(target_url)
         if not scan_id:
-            raise Exception("No se pudo iniciar el escaneo.")
+            raise Exception("No se pudo iniciar el spider.")
 
-        while int(zap.ascan.status(scan_id)) < 100:
-            print(f"[-] Escaneo en progreso: {zap.ascan.status(scan_id)}% completado")
+        start_time = asyncio.get_event_loop().time()
+        while True:
             await asyncio.sleep(5)
+            progress = int(zap.spider.status(scan_id))
+            elapsed_time = asyncio.get_event_loop().time() - start_time
+            
+            print(f"[-] Spider en progreso: {progress}% completado. Tiempo transcurrido: {int(elapsed_time)}s")
 
-        print("[+] Escaneo completado!")
+            if progress >= 100:
+                print("[+] Spider completado antes del tiempo límite.")
+                break
+            
+            if elapsed_time >= SPIDER_MAX_DURATION:
+                print(f"[!] Límite de tiempo de {SPIDER_MAX_DURATION}s alcanzado. Deteniendo el spider...")
+                zap.spider.stop(scan_id)
+                await asyncio.sleep(1)
+                break
 
-        alerts = zap.core.alerts(baseurl=target_url)
+        print("[+] Proceso de spider finalizado. Recopilando alertas...")
+        await asyncio.sleep(5)
+
+        all_alerts = zap.core.alerts()
+        print(f"[+] Se encontraron {len(all_alerts)} alertas en total (antes de deduplicar).")
+
+        unique_findings_map = {}
+        severity_order = {"High": 3, "Medium": 2, "Low": 1, "Informational": 0}
+
+        # --- CAMBIO CLAVE EN LA LÓGICA DE DEDUPLICACIÓN ---
+        for alert in all_alerts:
+            alert_type = alert.get('alert', 'Sin información')
+            if alert.get('risk') == 'Informational':
+                continue
+
+            # Para las alertas de librerías vulnerables (pluginId 10109 de retire.js)
+            # o cualquier alerta que contenga "vulnerable", creamos una clave única
+            # basada en la evidencia para no agruparlas.
+            unique_key = alert_type
+            if alert.get('pluginId') == '10109' or 'vulnerable' in alert_type.lower():
+                # La evidencia suele ser el nombre de la librería y su versión.
+                evidence = alert.get('evidence', '')
+                unique_key = f"{alert_type}::{evidence}"
+
+            current_severity_str = alert.get('risk', 'Desconocido')
+            current_severity_val = severity_order.get(current_severity_str, -1)
+            
+            # Mantenemos la lógica de priorizar por severidad si la clave ya existe
+            if unique_key in unique_findings_map:
+                existing_alert = unique_findings_map[unique_key]
+                existing_severity_val = severity_order.get(existing_alert.get('risk', 'Desconocido'), -1)
+                if current_severity_val > existing_severity_val:
+                    unique_findings_map[unique_key] = alert
+            else:
+                unique_findings_map[unique_key] = alert
+        
+        unique_alerts = list(unique_findings_map.values())
+        print(f"[+] Después de deduplicar y priorizar, quedan {len(unique_alerts)} vulnerabilidades únicas.")
 
         scan_results = {
             "meta": {
                 "scan_date": datetime.utcnow().isoformat(),
-                "scanner_version": "OWASP ZAP 2.x"
+                "scanner_version": "OWASP ZAP (Spider + Passive Scan)"
             },
             "findings": []
         }
 
-        for alert in alerts:
-            if alert.get('risk') != 'Informational':  # Filtrar vulnerabilidades "Informational"
-                finding = {
-                    "host": target_url,
-                    "url": alert.get("url", "No disponible"),
-                    "severity": alert.get('risk', 'Desconocido'),
-                    "type": alert.get('alert', 'Sin información'),
-                    "description": alert.get('description', 'No disponible'),
-                    "remediation": alert.get('solution', 'No disponible'),
-                    "evidence": alert.get('evidence', 'No disponible')
-                }
-                scan_results["findings"].append(finding)
+        # --- CAMBIO CLAVE AL CONSTRUIR LOS RESULTADOS ---
+        for alert in unique_alerts:
+            # Ahora capturamos los detalles ricos de CADA alerta
+            finding = {
+                "host": target_url,
+                "url": alert.get('url', 'URL no especificada'),
+                "evidence": alert.get('evidence', 'No disponible'),
+                "severity": alert.get('risk', 'Desconocido'),
+                "type": alert.get('alert', 'Sin información'),
+                "description": alert.get('description', 'No disponible'),
+                "remediation": alert.get('solution', 'No disponible'),
+                # El campo 'other' a menudo contiene oro puro para librerías vulnerables
+                "details": alert.get('other', 'Sin detalles adicionales.') 
+            }
+            scan_results["findings"].append(finding)
 
         return scan_results
 
     except Exception as e:
-        print(f"Error durante el escaneo: {e}")
+        print(f"Error durante el escaneo con spider: {e}")
         return {"error": f"Error en el escaneo: {str(e)}"}
 
 
@@ -200,7 +257,7 @@ async def serve_spa(request: Request):
     # Abre y lee el archivo simpleScan.html
     # Asegúrate de que la ruta al archivo sea correcta según tu estructura de carpetas.
     try:
-        with open("Static/simpleScan.html", "r", encoding="utf-8") as f:
+        with open("static/simpleScan.html", "r", encoding="utf-8") as f:
             html_content = f.read()
         return HTMLResponse(content=html_content, status_code=200)
     except FileNotFoundError:
@@ -217,54 +274,48 @@ class ChatGPTRequest(BaseModel):
 @app.post("/scan")
 async def scan(request: ScanRequest):
     target_url = str(request.url)
-    print(f"🔍 Escaneando: {target_url}")
+    print(f"🚦 Petición de escaneo recibida para: {target_url}. Esperando el turno...")
 
-    try:
-        # 1. Realizar chequeos rápidos primero
-        https_check_results = await check_https_and_certificate(target_url)
+    # --- NUEVO: Usamos el Lock aquí ---
+    # El código dentro de este bloque no se ejecutará hasta que el lock esté libre.
+    # Si otro escaneo está en curso, esta línea hará que la petición espere aquí.
+    async with scan_lock:
+        print(f"✅ Turno obtenido. Iniciando escaneo para: {target_url}")
+        
+        try:
+            # Toda la lógica que ya tenías se mantiene igual, pero ahora está protegida.
+            https_check_results = await check_https_and_certificate(target_url)
+            zap_results = await scan_api(target_url)
 
-        # 2. Ejecutar escaneo ZAP
-        zap_results = await scan_api(target_url) # Tu función scan_api existente
+            openai_recommendations = []
+            if zap_results.get("findings"):
+                recommendation_request = ChatGPTRequest(findings=zap_results["findings"])
+                openai_response_obj = await get_recommendations(recommendation_request)
+                openai_recommendations = openai_response_obj.get("results", [])
 
-        if "findings" in zap_results:
-            unique_findings = []
-            seen_alerts = set()
-            for finding in zap_results["findings"]:
-                alert_key = (finding["type"], finding["url"], finding["severity"])
-                if alert_key not in seen_alerts:
-                    unique_findings.append(finding)
-                    seen_alerts.add(alert_key)
-            zap_results["findings"] = unique_findings
+            final_results = {
+                "quick_checks": {
+                    "https_certificate": https_check_results
+                },
+                "zap_scan": {
+                     "meta": zap_results.get("meta", {}),
+                     "findings": zap_results.get("findings", []),
+                },
+                "openai_recommendations": openai_recommendations
+            }
+            if "error" in zap_results:
+                final_results["zap_scan"]["error"] = zap_results["error"]
 
-        # 3. Obtener recomendaciones de OpenAI para los hallazgos de ZAP
-        # Solo enviar hallazgos de ZAP a OpenAI si existen
-        openai_recommendations = []
-        if zap_results.get("findings"):
-            recommendation_request = ChatGPTRequest(findings=zap_results["findings"])
-            openai_response_obj = await get_recommendations(recommendation_request) # Asumo que get_recommendations devuelve un objeto con una clave "results"
-            openai_recommendations = openai_response_obj.get("results", [])
+            print(f"🏁 Escaneo completado para: {target_url}. Liberando el lock.")
+            return final_results
+        
+        except Exception as e:
+            print(f"❌ Error durante el escaneo protegido para {target_url}: {e}")
+            # Asegurarse de que el error también se maneje dentro del contexto del lock.
+            raise HTTPException(status_code=500, detail=f"Error en el escaneo: {str(e)}")
 
-        # 4. Combinar todos los resultados
-        final_results = {
-            "quick_checks": { # Nueva sección para chequeos rápidos
-                "https_certificate": https_check_results
-            },
-            "zap_scan": { # Sección para resultados de ZAP
-                 "meta": zap_results.get("meta", {}), # Incluir meta si existe
-                 "findings": zap_results.get("findings", []), # Usar .get para evitar KeyError
-            },
-            "openai_recommendations": openai_recommendations # Las recomendaciones de OpenAI
-        }
-        # Si hubo un error en el escaneo ZAP, zap_results podría ser {"error": "..."}
-        if "error" in zap_results:
-            final_results["zap_scan"]["error"] = zap_results["error"]
-
-
-        return final_results
-    except Exception as e:
-        # Captura de excepciones más específicas podría ser útil aquí
-        print(f"Error general en el endpoint /scan: {e}")
-        raise HTTPException(status_code=500, detail=f"Error en el escaneo: {str(e)}")
+    # Al salir del bloque `async with`, el lock se libera automáticamente, 
+    # permitiendo que la siguiente petición en la cola comience.
     
 
 @app.post("/recommendations")
@@ -280,17 +331,15 @@ async def get_recommendations(request: ChatGPTRequest):
         formatted_finding = json.dumps(finding, indent=2, ensure_ascii=False)
 
         prompt_content = (
-            "Te enviaré los detalles de una vulnerabilidad de seguridad web. "
-            "Genera un resumen detallado de la descripción de la vulnerabilidad "  # Modificado: Resumen detallado
-            "(campo 'description') que proporcione un contexto completo y explique las implicaciones de la vulnerabilidad. " # Agregado: Instrucción para más detalle
-            "Además, genera una recomendación detallada y concisa para solucionarla. "
-            "No repitas la descripción en la recomendación. Sé directo y técnico. "
-            "Responde en el siguiente formato JSON:\n"
+            "Eres un analista de ciberseguridad experto. Te proporciono un hallazgo de vulnerabilidad en formato JSON. Tu tarea es analizarlo y devolver un JSON con dos claves:\n\n"
+            "1.  **resumen_descripcion**: Crea un resumen técnico claro. **Prioriza la información del campo 'details' y 'evidence'**. El campo 'details' a menudo contiene resúmenes de CVE o el componente específico. El campo 'evidence' te dirá qué librería o componente es. Si 'description' es genérico, ignóralo y céntrate en los otros campos para explicar la vulnerabilidad.\n\n"
+            "2.  **recomendacion**: Proporciona una recomendación de solución específica y accionable. **Usa 'evidence' (ej. nombre de librería y versión) y 'details' (que puede sugerir una versión segura) para ser muy preciso**. Por ejemplo, si encuentras 'evidence: jquery-1.12.4.js' y 'details' menciona una vulnerabilidad XSS, tu recomendación debe ser 'Actualizar la librería jQuery a la versión 3.5.0 o superior para mitigar la CVE-XXXX-XXXX encontrada en la URL...'.\n\n"
+            "Responde únicamente con el siguiente formato JSON, sin texto introductorio ni explicaciones adicionales:\n"
             "{\n"
-            '  "resumen_descripcion": "[Aquí va el resumen de la descripción]",\n'
-            '  "recomendacion": "[Aquí va la recomendación]"\n'
+            '  "resumen_descripcion": "[Tu resumen técnico basado en details y evidence]",\n'
+            '  "recomendacion": "[Tu recomendación específica para actualizar el componente de evidence]"\n'
             "}\n\n"
-            f"Vulnerabilidad:\n{formatted_finding}"
+            f"--- HALLAZGO A ANALIZAR ---\n{formatted_finding}"
         )
 
         payload = {
@@ -298,43 +347,49 @@ async def get_recommendations(request: ChatGPTRequest):
             "messages": [
                 {
                     "role": "system",
-                    "content": "Eres un experto en ciberseguridad que proporciona resúmenes concisos de vulnerabilidades web y recomendaciones para solucionarlas."
+                    "content": "Eres un experto en ciberseguridad que analiza datos de escáneres y proporciona resúmenes técnicos y recomendaciones de solución específicas, respondiendo siempre en formato JSON."
                 },
                 {
                     "role": "user",
                     "content": prompt_content
                 }
             ],
-            "temperature": 0.5  # Ajusta según sea necesario
+            "temperature": 0.2, # Un poco más determinista para respuestas consistentes
+            "response_format": {"type": "json_object"} # ¡NUEVO! Fuerza la salida en JSON (en modelos compatibles)
         }
 
         headers = {
             "Authorization": f"Bearer {OPENAI_API_KEY}",
             "Content-Type": "application/json"
         }
-
+        print("="*50)
         print(f"Enviando a OpenAI:\n{json.dumps(payload, indent=2)}")
+        print("="*50)
 
         try:
             response = requests.post("https://api.openai.com/v1/chat/completions", json=payload, headers=headers)
             response.raise_for_status()
             response_json = response.json()
-            print(f"Respuesta de OpenAI:\n{json.dumps(response_json, indent=2)}")
 
             response_content = response_json.get("choices", [{}])[0].get("message", {}).get("content", "{}")
             try:
                 result = json.loads(response_content)
-                resumen_descripcion = result.get("resumen_descripcion", "No disponible")
-                recomendacion = result.get("recomendacion", "No disponible")
-            except json.JSONDecodeError:
-                print(f"Error al decodificar JSON de OpenAI: {response_content}")
-                resumen_descripcion = "No disponible"
-                recomendacion = "No disponible"
-
-            all_results.append({"resumen_descripcion": resumen_descripcion.strip(), "recomendacion": recomendacion.strip()})
+                resumen = result.get("resumen_descripcion", "No se pudo generar un resumen para este hallazgo.")
+                reco = result.get("recomendacion", "No se pudo generar una recomendación para este hallazgo.")
+                
+                all_results.append({"resumen_descripcion": resumen.strip(), "recomendacion": reco.strip()})
+            except (json.JSONDecodeError, TypeError):
+                print(f"[!] Error: La respuesta de OpenAI no fue un JSON válido para el hallazgo '{finding.get('type')}'. Contenido: {response_content}")
+                all_results.append({
+                    "resumen_descripcion": f"El análisis por IA falló. Descripción original: {html.escape(finding.get('description', 'N/A'))}",
+                    "recomendacion": f"El análisis por IA falló. Solución original: {html.escape(finding.get('solution', 'N/A'))}"
+                })
 
         except requests.exceptions.RequestException as e:
-            print(f"Error de OpenAI: {e}")
-            all_results.append({"resumen_descripcion": "No disponible", "recomendacion": "No disponible"})
+            print(f"[!] Error de conexión con OpenAI: {e}")
+            all_results.append({
+                "resumen_descripcion": "Error al conectar con el servicio de IA.",
+                "recomendacion": "No se pudo obtener la recomendación debido a un error de red."
+            })
 
     return {"results": all_results}  # Devuelve un diccionario con la lista de resultados

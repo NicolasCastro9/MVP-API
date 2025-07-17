@@ -1,37 +1,39 @@
 <!DOCTYPE html>
 <html lang="es">
-
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Escaneo de Seguridad</title>
+    <title>SimpleScan - Escáner de Seguridad Avanzado</title>
     <link rel="stylesheet" href="/static/simpleScan.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Favicon profesional -->
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🛡️</text></svg>">
 </head>
-
 <body>
     <header>
-        <h1>SIMPLE-SCAN</h1>
-        <p>Herramienta de seguridad que escanea vulnerabilidades en tus aplicaciones y sitios web</p>
+        <div class="header-content">
+            <h1><i class="fas fa-shield-virus"></i> SIMPLE-SCAN</h1>
+            <p>Escáner de vulnerabilidades de paginas web y aplicaciones</p>
+        </div>
     </header>
 
     <div class="main-content">
         <div class="container">
             <div id="scanner">
-                <input type="text" id="urlInput" placeholder="Ingresa la URL">
-                <button onclick="scanURL()"><i class="fas fa-search"></i> Escanear</button>
+                <input type="text" id="urlInput" placeholder="Ingresa la URL a escanear (e.g., https://example.com)">
+                <button onclick="scanURL()"><i class="fas fa-search-dollar"></i> Escanear Ahora</button>
             </div>
+            <!-- El contenedor de resultados se generará dinámicamente -->
             <div id="recommendations"></div>
-            </div>
+        </div>
     </div>
 
     <footer>
-        <p>&copy; 2025 - SimpleScan | Herramienta informativa. Usa la información de forma responsable.</p>
+        <p>© 2025 - SimpleScan | Herramienta de análisis con fines educativos y responsables.</p>
     </footer>
+
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="/static/simpleScan.js"></script>
 </body>
-
 </html>
-
 
